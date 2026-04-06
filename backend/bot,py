@@ -1,0 +1,52 @@
+import asyncio
+import os
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import CommandStart
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from supabase import create_client, Client
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+# Конфигурация (задаются в переменных окружения Render)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+WEBAPP_URL = os.getenv("WEBAPP_URL") # Ссылка на Vercel
+
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+scheduler = AsyncIOScheduler()
+
+@dp.message(CommandStart())
+async def cmd_start(message: types.Message):
+    # Регистрируем юзера, если его нет
+    user_data = {"telegram_id": message.from_user.id, "username": message.from_user.username}
+    supabase.table("users").upsert(user_data).execute()
+
+    markup = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Отрыть Трекер 🏋️‍♂️", web_app=WebAppInfo(url=WEBAPP_URL))]
+    ])
+    await message.answer("Привет! Твой трекер тренировок и добавок готов.", reply_markup=markup)
+
+# Функция для отправки пушей (вызывается планировщиком)
+async def send_reminder(text: str, user_id: int):
+    try:
+        await bot.send_message(chat_id=user_id, text=text)
+    except Exception as e:
+        print(f"Failed to send to {user_id}: {e}")
+
+def setup_scheduler(user_id: int):
+    # Пример расписания. В идеале брать время из БД юзера под его график
+    scheduler.add_job(send_reminder, 'cron', hour=8, minute=0, args=["💊 Утро! D3, Рыбий жир, Креатин. После завтрака - НАК.", user_id])
+    scheduler.add_job(send_reminder, 'cron', hour=14, minute=0, args=["💊 Обед! B-комплекс и Гейнер.", user_id])
+    scheduler.add_job(send_reminder, 'cron', hour=20, minute=0, args=["💤 Вечер! Ашваганда и Магний+B6.", user_id])
+
+async def main():
+    # Запуск планировщика для конкретного юзера (подставь свой ID или бери из БД)
+    # setup_scheduler(ТВОЙ_TELEGRAM_ID) 
+    scheduler.start()
+    print("Бот запущен...")
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
